@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
+import org.apache.commons.math3.util.FastMath;
+
 final class Histogram implements Iterable<Centroid> {
 
     /**
@@ -55,46 +57,57 @@ final class Histogram implements Iterable<Centroid> {
         assert dest.length() == 0;
         assert src.sorted();
         final long totalCount = src.totalCount();
-        double currentMean = Double.NaN;
-        int currentCount = 0;
         final boolean recordPoints = src.data != null;
-        List<Double> currentPoints = null;
-        for (int srcIdx = 0, length = src.length(); srcIdx < length; ++srcIdx) {
-            final double mean = src.mean(srcIdx);
-            final int count = src.count(srcIdx);
-            final List<Double> points = src.data(srcIdx);
-
-            if (Double.isNaN(currentMean)) {
-                currentMean = mean;
-                currentCount = count;
-                currentPoints = points;
-            } else if (srcIdx == length - 1 || mean - currentMean <= src.mean(srcIdx + 1) - mean) {
-                // the current mean is the closest mean, try to merge
-                final double q = totalCount == 1 ? 0.5 : (dest.totalCount() + (currentCount + count - 1) / 2.0) / (totalCount - 1);
-                final double k = 4 * totalCount * q * (1 - q) / compression;
-                if (count + currentCount <= k) {
-                    // count is ok => merge
-                    currentMean = weightedAverage(currentMean, currentCount, mean, count);
-                    currentCount += count;
-                    if (recordPoints) {
-                        currentPoints.addAll(points);
-                    }
-                } else {
-                    // count is too high => don't merge
-                    dest.append(currentMean, currentCount, currentPoints);
-                    dest.append(mean, count, points);
-                    currentMean = Double.NaN;
-                }
-            } else {
-                // the next mean is closer, flush
-                dest.append(currentMean, currentCount, currentPoints);
-                currentMean = mean;
-                currentCount = count;
-                currentPoints = points;
-            }
+        final double delta = 1./compression;        
+        final int length = src.length();
+        final double fillLevels[] = new double[length];
+        
+        // calculate fill levels
+        {
+	        double lastValue = Double.NEGATIVE_INFINITY;
+	        long accumulatedCount = 0;
+	        for(int srcIdx = 0; srcIdx < length; ++srcIdx) {
+	        	accumulatedCount += src.count(srcIdx);
+	        	double nextValue = 0.25d*Math.log(((double)accumulatedCount)/(totalCount-accumulatedCount));	
+	        	fillLevels[srcIdx] = nextValue - lastValue;
+	        	lastValue = nextValue;
+	        }
         }
-        if (Double.isNaN(currentMean) == false) {
-            dest.append(currentMean, currentCount, currentPoints);
+        
+        // partition centroids
+        {
+	        double currentMean = Double.NaN;
+	        int currentCount = 0;
+	        double currentFillLevel = 0.;
+	        List<Double> currentPoints = null;
+	        
+	        for (int srcIdx = 0; srcIdx < length; ++srcIdx) {
+	            final double mean = src.mean(srcIdx);
+	            final int count = src.count(srcIdx);
+	            final double fillLevel = fillLevels[srcIdx];
+	            final List<Double> points = src.data(srcIdx);
+	            
+	            if (fillLevel + currentFillLevel > delta) {
+	            	if (Double.isNaN(currentMean) == false) {
+	            		dest.append(currentMean, currentCount, currentPoints);
+	            	}
+	            	currentMean = mean;
+	                currentCount = count;
+	                currentPoints = points;
+	                currentFillLevel = fillLevel;
+	            }
+	            else {
+	            	 currentMean = weightedAverage(currentMean, currentCount, mean, count);
+	                 currentCount += count;
+	                 currentFillLevel += fillLevel;
+	                 if (recordPoints) {
+	                     currentPoints.addAll(points);
+	                 }
+	            }
+	        }
+	        if (Double.isNaN(currentMean) == false) {
+	            dest.append(currentMean, currentCount, currentPoints);
+	        }
         }
     }
 

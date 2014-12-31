@@ -59,10 +59,6 @@ public class BatchTDigest extends AbstractTDigest {
         buffer.append(x, w, data);
         if (buffer.length() >= main.length()) {
             merge();
-
-            if (main.length() > 10 * compression) {
-                compress();
-            }
         }
     }
 
